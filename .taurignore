@@ -1,0 +1,5 @@
+models/
+videos/
+output/
+*.onnx
+*.mp4
