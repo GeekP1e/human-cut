@@ -1,5 +1,6 @@
-use anyhow::{Result};
+use anyhow::Result;
 use log::{info, warn};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -16,31 +17,66 @@ pub fn download_yolo_model(model_type: &str) -> Result<PathBuf> {
     let models_dir = Path::new("./models");
     std::fs::create_dir_all(models_dir)?;
 
-    let model_filename = format!("yolov8{}.onnx", &model_type[0..1]);
-    let model_path = models_dir.join(&model_filename);
+    let (model_filename, model_url) = match model_type {
+        "nano" => (
+            "yolov8n.onnx",
+            "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.onnx",
+        ),
+        "small" => (
+            "yolov8s.onnx",
+            "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8s.onnx",
+        ),
+        "medium" => (
+            "yolov8m.onnx",
+            "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8m.onnx",
+        ),
+        _ => anyhow::bail!("Unknown model type: {}. Use: nano, small, medium", model_type),
+    };
+    let model_path = models_dir.join(model_filename);
 
-    if model_path.exists() {
+    if model_path.exists() && model_path.metadata()?.len() > 0 {
         println!("✅ Model already exists: {}", model_path.display());
         return Ok(model_path);
     }
 
-    let model_url = match model_type {
-        "nano"   => "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8n.onnx",
-        "small"  => "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8s.onnx",
-        "medium" => "https://github.com/ultralytics/assets/releases/download/v8.4.0/yolov8m.onnx",
-        _ => anyhow::bail!("Unknown model type: {}. Use: nano, small, medium", model_type),
-    };
-
     println!("📥 Downloading YOLOv8 {} model...", model_type);
-    let response = reqwest::blocking::get(model_url)?;
-    let bytes = response.bytes()?;
+    let mut response = reqwest::blocking::get(model_url)?.error_for_status()?;
+    let expected_size = response.content_length();
+    let temp_path = model_path.with_extension("onnx.download");
+    if temp_path.exists() {
+        std::fs::remove_file(&temp_path)?;
+    }
 
-    if bytes.is_empty() {
+    let mut file = std::fs::File::create(&temp_path)?;
+    let downloaded = std::io::copy(&mut response, &mut file)?;
+    file.flush()?;
+    file.sync_all()?;
+
+    if downloaded == 0 {
+        let _ = std::fs::remove_file(&temp_path);
         anyhow::bail!("Downloaded model is empty. Please download manually into ./models/");
     }
 
-    std::io::Write::write_all(&mut std::fs::File::create(&model_path)?, &bytes)?;
-    println!("✅ Model saved: {} ({:.2} MB)", model_path.display(), bytes.len() as f64 / (1024.0 * 1024.0));
+    if let Some(expected_size) = expected_size {
+        if downloaded != expected_size {
+            let _ = std::fs::remove_file(&temp_path);
+            anyhow::bail!(
+                "Incomplete model download: got {} of {} bytes",
+                downloaded,
+                expected_size
+            );
+        }
+    }
+
+    if model_path.exists() {
+        std::fs::remove_file(&model_path)?;
+    }
+    std::fs::rename(&temp_path, &model_path)?;
+    println!(
+        "✅ Model saved: {} ({:.2} MB)",
+        model_path.display(),
+        downloaded as f64 / (1024.0 * 1024.0)
+    );
 
     Ok(model_path)
 }

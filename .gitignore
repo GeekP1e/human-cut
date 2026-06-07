@@ -1,6 +1,10 @@
 /target
 /output/*
+/models/*.onnx
+/models/*.download
 /tauri.log
 /videos/test_video.mp4
 /src-tauri/videos/demo_people.mp4
 /src-tauri/models/yolov8n.onnx
+/src-tauri/models/*.onnx
+/src-tauri/models/*.download

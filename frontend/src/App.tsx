@@ -27,6 +27,8 @@ const MODELS = [
   { id: "medium", label: "YOLOv8 medium", hint: "~52 MB · accurate", file: "yolov8m.onnx" },
 ];
 
+const sleep = (ms: number) => new Promise(resolve => window.setTimeout(resolve, ms));
+
 export default function App() {
   const [videoPath, setVideoPath] = useState<string>("");
   const [outputPath, setOutputPath] = useState<string>("./output");
@@ -57,6 +59,21 @@ export default function App() {
     return model ? downloadedModels.includes(model.file) : false;
   };
 
+  const waitForDownloadedModel = async (modelId: string, timeoutMs = 180_000) => {
+    const model = MODELS.find(m => m.id === modelId);
+    if (!model) return false;
+
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const models = await invoke<string[]>("get_available_models");
+      setDownloadedModels(models);
+      if (models.includes(model.file)) return true;
+      await sleep(1000);
+    }
+
+    return false;
+  };
+
   const pickVideo = async () => {
     const selected = await open({
       multiple: false,
@@ -76,13 +93,24 @@ export default function App() {
 
   const handleDownloadModel = async (id: string) => {
     setDownloadingModel(id);
+    setStatus("processing");
+    setMessage("Downloading model, please wait…");
     try {
       await invoke("download_model_cmd", { modelType: id });
       await refreshModels();
       setModelType(id);
+      setStatus("done");
+      setMessage("Model downloaded");
     } catch (e) {
-      setStatus("error");
-      setMessage(String(e));
+      const downloaded = await waitForDownloadedModel(id);
+      if (downloaded) {
+        setModelType(id);
+        setStatus("done");
+        setMessage("Model downloaded");
+      } else {
+        setStatus("error");
+        setMessage(String(e));
+      }
     } finally {
       setDownloadingModel(null);
     }
@@ -485,7 +513,7 @@ export default function App() {
                         </div>
                         <button
                           className={`model-card-action ${!downloaded ? "download" : isSelected ? "selected-active" : "select"}`}
-                          disabled={isDownloading}
+                          disabled={downloadingModel !== null}
                           onClick={(e) => {
                             e.stopPropagation();
                             if (!downloaded) handleDownloadModel(m.id);
@@ -582,7 +610,7 @@ export default function App() {
               {status === "processing" && <div className="spinner" />}
               {status === "done" && "✓"}
               {status === "error" && "✗"}
-              <span>{status === "processing" ? "Processing, please wait…" : message}</span>
+              <span>{status === "processing" ? message || "Processing, please wait…" : message}</span>
             </div>
           )}
 
